@@ -4,6 +4,7 @@
 #
 import martian
 import subprocess
+import shutil
 import tenkit.bam as tk_bam
 import tenkit.bio_io as tk_io
 import cellranger.utils as cr_utils
@@ -15,24 +16,35 @@ stage CALL_SNPS(
     in  bam[]    input_bams,
     in  string[] loci,
     out vcf[]    output,
-    out vcf      raw_variants,
+    out vcf.gz   raw_variants,
     src py       "stages/snpclust/call_snps",
 ) split using (
     in  bam    input,
     in  string locus,
+    in  path   genome_fasta,
     out vcf    raw_variant_chunk,
 )
 '''
 def split(args):
+    # TODO: combine this with FILTER_MODIFY_BAM into a library or explicitly pass the files along
+    # bring in genome fasta and index it -- cellranger references have no fasta index or dict file
+    genome_fasta_path = cr_utils.get_reference_genome_fasta(args.reference_path)
+    local_path = martian.make_path('genome.fa')
+    try:
+        os.symlink(genome_fasta_path, local_path)
+    except OSError:
+        shutil.copy(genome_fasta_path, local_path)
+    subprocess.check_call(['samtools', 'faidx', local_path])
+    with open(local_path.replace('.fa', '.dict'), 'w') as outf:
+        subprocess.check_call(['samtools', 'dict', local_path], stdout=outf)
+
     chunks = []
     for bam, locus in zip(args.input_bams, args.loci):
-        chunks.append({'locus': locus, 'input_bam': bam, '__mem_gb': 32, '__threads': 8})
+        chunks.append({'locus': locus, 'input_bam': bam, 'genome_fasta': local_path, '__mem_gb': 6*8, '__threads': 8})
     return {'chunks': chunks, 'join': {'__mem_gb': 16}}
 
 
 def main(args, outs):
-    genome_fasta_path = cr_utils.get_reference_genome_fasta(args.reference_path)
-
     bed_path = martian.make_path('region.bed')
     with open(bed_path, 'w') as f:
         f.write(args.locus)
@@ -41,7 +53,7 @@ def main(args, outs):
     in_bam = tk_bam.create_bam_infile(args.input_bam)
     sample = in_bam.header['RG'][0]['SM']
     raw_variant_chunk = martian.make_path(outs.raw_variant_chunk)
-    subprocess.check_call(['gatk-launch', 'Mutect2', '-R', genome_fasta_path, '--intervals',
+    subprocess.check_call(['gatk-launch', 'Mutect2', '-R', args.genome_fasta, '--intervals',
                            bed_path, '-I', args.input_bam, '-tumor', sample,
                            '-O', raw_variant_chunk, '--TMP_DIR', os.getcwd(),
                            '--native-pair-hmm-threads', str(args.__threads)])
@@ -49,6 +61,7 @@ def main(args, outs):
         
 def join(args, outs, chunk_defs, chunk_outs):
     outs.coerce_strings()
-    outs.raw_variants = [chunk.raw_variant_chunk for chunk in chunk_outs]
-    
-    tk_io.combine_vcfs(outs.raw_variants, outs.output)
+    outs.output = [chunk.raw_variant_chunk for chunk in chunk_outs]
+
+    raw_variants = martian.make_path(outs.raw_variants)
+    tk_io.combine_vcfs(raw_variants.replace('.gz', ''), outs.output)

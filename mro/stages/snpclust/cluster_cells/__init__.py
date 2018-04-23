@@ -73,6 +73,7 @@ def split(args):
                 'components': components,
                 'model': get_model_name(components),
                 'chain': chain,
+                '__mem_gb': 8
             }
             chunks.append(chunk)
 

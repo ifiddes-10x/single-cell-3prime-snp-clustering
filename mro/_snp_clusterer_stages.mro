@@ -6,6 +6,7 @@ filetype h5;
 filetype json;
 filetype tsv;
 filetype vcf;
+filetype vcf.gz;
 
 stage FILTER_MODIFY_BAM(
     in  bam       input,
@@ -17,6 +18,7 @@ stage FILTER_MODIFY_BAM(
     src py     "stages/snpclust/filter_modify_bam",
 ) split (
     in  string locus,
+    in path    genome_fasta,
     out bam    output,
 )
 
@@ -25,11 +27,12 @@ stage CALL_SNPS(
     in  bam[]    input_bams,
     in  string[] loci,
     out vcf[]    output,
-    out vcf      raw_variants,
+    out vcf.gz   raw_variants,
     src py       "stages/snpclust/call_snps",
 ) split using (
     in  bam    input,
     in  string locus,
+    in  path   genome_fasta,
     out vcf    raw_variant_chunk,
 )
 
