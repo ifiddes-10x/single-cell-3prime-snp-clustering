@@ -7,7 +7,6 @@ pipeline SNP_CLUSTERER(
     in  path  reference_path,
     in  bam   possorted_genome_bam,
     in  tsv   cell_barcodes,
-    in  map   align,
     in  int   min_snp_call_qual,
     in  int   min_bcs_per_snp,
     in  int   min_snp_obs,
@@ -30,29 +29,23 @@ pipeline SNP_CLUSTERER(
     out vcf   raw_variants,
 )
 {
-    call MODIFY_BAM(
-        input         = self.possorted_genome_bam,
+    call FILTER_MODIFY_BAM(
+        input           = self.possorted_genome_bam,
         reference_path  = self.reference_path,
-        bed_file      = self.bed_file,
-    )
-    
-    call FILTER_READS(
-        input_bams         = MODIFY_BAM.output_bams,
-        cell_barcodes = self.cell_barcodes,
-        align         = self.align,
+        bed_file        = self.bed_file,
+        cell_barcodes   = self.cell_barcodes,
     )
 
     call CALL_SNPS(
         reference_path = self.reference_path,
-        n_donors       = 2,
-        input          = FILTER_READS.output,
-        bed_file       = self.bed_file,
+        input_bams     = FILTER_MODIFY_BAM.output_bams,
+        loci           = FILTER_MODIFY_BAM.loci,
     )
 
     call COUNT_ALLELES(
         reference_path    = self.reference_path,
         cell_barcodes     = self.cell_barcodes,
-        reads             = FILTER_READS.output,
+        input_bams        = FILTER_MODIFY_BAM.output_bams,
         variants          = CALL_SNPS.output,
         min_snp_call_qual = self.min_snp_call_qual,
         min_bcs_per_snp   = self.min_bcs_per_snp,

@@ -19,7 +19,7 @@ import snpclust.constants as snp_constants
 __MRO__ = '''
 stage COUNT_ALLELES(
     in  path  reference_path,
-    in  bam   reads,
+    in  bam[] input_bams,
     in  vcf[] variants,
     in  tsv   cell_barcodes,
     in  int   min_snp_call_qual,
@@ -32,9 +32,10 @@ stage COUNT_ALLELES(
     out path  raw_allele_bc_matrices_mex,
     out h5    likelihood_allele_bc_matrices_h5,
     out path  likelihood_allele_bc_matrices_mex,
-    src py    "stages/snpclust/count_alleles_pd",
+    src py    "stages/snpclust/count_alleles",
 ) split using (
     in  vcf   chunk_variants,
+    in  bam   chunk_bam,
     in  json  snps,
 )
 '''
@@ -62,7 +63,10 @@ def split(args):
                         else snp_constants.DEFAULT_MIN_SNP_CALL_QUAL
     save_snps(out_json_file, args.variants, min_snp_call_qual)
 
-    chunks = [{'chunk_variants': chunk_variants, 'snps': out_json_file} for chunk_variants in args.variants]
+    chunks = []
+    for chunk_bam, chunk_variants in zip(args.input_bams, args.variants):
+        chunks.append({'chunk_variants': chunk_variants, 'snps': out_json_file, 'bam': chunk_bam})
+
     return {'chunks': chunks}
 
 def save_snps(out_filename, in_filenames, min_snp_call_qual):
@@ -89,7 +93,7 @@ def get_read_qpos(read):
     raise Exception("Pysam pileup read has neither qpos nor query_position attribute")
 
 def main(args, outs):
-    in_bam = tk_bam.create_bam_infile(args.reads)
+    in_bam = tk_bam.create_bam_infile(args.chunk_bam)
 
     out_vcf = tk_io.VariantFileWriter(
         open(outs.filtered_variants, 'w'), template_file=open(args.chunk_variants))
