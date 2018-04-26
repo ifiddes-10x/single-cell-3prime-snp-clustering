@@ -22,7 +22,6 @@ stage COUNT_ALLELES(
     in  bam[] input_bams,
     in  vcf[] variants,
     in  tsv   cell_barcodes,
-    in  int   min_snp_call_qual,
     in  int   min_bcs_per_snp,
     in  int   min_snp_obs,
     in  int   min_snp_base_qual,
@@ -43,7 +42,7 @@ stage COUNT_ALLELES(
 def format_record(record):
     return ','.join((record.CHROM, str(record.POS), str(record.REF), str(record.ALT[0])))
 
-def vcf_record_iter(in_filename, min_snp_qual):
+def vcf_record_iter(in_filename):
     in_vcf = tk_io.VariantFileReader(in_filename)
     for record in in_vcf.record_getter(restrict_type='snp'):
         # Only support 1 ALT
@@ -51,17 +50,11 @@ def vcf_record_iter(in_filename, min_snp_qual):
             continue
         assert len(record.ALT) == 1
 
-        # Filter SNP based on call quality
-        if record.QUAL < min_snp_qual:
-            continue
-
         yield record
 
 def split(args):
     out_json_file = martian.make_path('snps.json')
-    min_snp_call_qual = args.min_snp_call_qual if args.min_snp_call_qual is not None \
-                        else snp_constants.DEFAULT_MIN_SNP_CALL_QUAL
-    save_snps(out_json_file, args.variants, min_snp_call_qual)
+    save_snps(out_json_file, args.variants)
 
     chunks = []
     for chunk_bam, chunk_variants in zip(args.input_bams, args.variants):
@@ -70,10 +63,10 @@ def split(args):
 
     return {'chunks': chunks}
 
-def save_snps(out_filename, in_filenames, min_snp_call_qual):
+def save_snps(out_filename, in_filenames):
     snps = []
     for in_filename in in_filenames:
-        for record in vcf_record_iter(in_filename, min_snp_call_qual):
+        for record in vcf_record_iter(in_filename):
             snps.append(format_record(record))
 
     with open(out_filename, 'w') as f:
@@ -111,13 +104,12 @@ def main(args, outs):
     likelihood_allele_bc_matrices = cr_matrix.GeneBCMatrices(likelihood_matrix_types, likelihood_matrix_snps, bcs, dtype=np.float64)
 
     # Configurable SNP filter parameters
-    min_snp_call_qual = args.min_snp_call_qual if args.min_snp_call_qual is not None else snp_constants.DEFAULT_MIN_SNP_CALL_QUAL
     min_bcs_per_snp = args.min_bcs_per_snp if args.min_bcs_per_snp is not None else snp_constants.DEFAULT_MIN_BCS_PER_SNP
     min_snp_obs = args.min_snp_obs if args.min_snp_obs is not None else snp_constants.DEFAULT_MIN_SNP_OBS
     base_error_rate = args.base_error_rate if args.base_error_rate is not None else snp_constants.DEFAULT_BASE_ERROR_RATE
     min_snp_base_qual = args.min_snp_base_qual if args.min_snp_base_qual is not None else snp_constants.DEFAULT_MIN_SNP_BASE_QUAL
 
-    for record in vcf_record_iter(args.chunk_variants, min_snp_call_qual):
+    for record in vcf_record_iter(args.chunk_variants):
         ref_base = str(record.REF)
         alt_base = str(record.ALT[0])
 
