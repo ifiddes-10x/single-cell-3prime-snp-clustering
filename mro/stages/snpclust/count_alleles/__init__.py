@@ -202,7 +202,9 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.coerce_strings()
 
     input_vcfs = [chunk_out.filtered_variants for chunk_out in chunk_outs]
-    tk_io.combine_vcfs(outs.filtered_variants, input_vcfs)
+    filtered_variants = martian.make_path('filtered_variants.vcf')
+    tk_io.combine_vcfs(filtered_variants, input_vcfs)
+    outs.filtered_variants = filtered_variants + '.gz'
 
     raw_chunk_h5s = [chunk_out.raw_allele_bc_matrices_h5 for chunk_out in chunk_outs]
     raw_allele_bc_matrices = cr_matrix.merge_matrices(raw_chunk_h5s)

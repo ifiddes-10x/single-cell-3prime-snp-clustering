@@ -37,25 +37,25 @@ stage CALL_SNPS(
 )
 
 stage COUNT_ALLELES(
-    in  path  reference_path,
-    in  bam[] input_bams,
-    in  vcf[] variants,
-    in  tsv   cell_barcodes,
-    in  int   min_snp_call_qual,
-    in  int   min_bcs_per_snp,
-    in  int   min_snp_obs,
-    in  int   min_snp_base_qual,
-    in  float base_error_rate,
-    out vcf   filtered_variants,
-    out h5    raw_allele_bc_matrices_h5,
-    out path  raw_allele_bc_matrices_mex,
-    out h5    likelihood_allele_bc_matrices_h5,
-    out path  likelihood_allele_bc_matrices_mex,
-    src py    "stages/snpclust/count_alleles",
+    in  path   reference_path,
+    in  bam[]  input_bams,
+    in  vcf[]  variants,
+    in  tsv    cell_barcodes,
+    in  int    min_snp_call_qual,
+    in  int    min_bcs_per_snp,
+    in  int    min_snp_obs,
+    in  int    min_snp_base_qual,
+    in  float  base_error_rate,
+    out vcf.gz filtered_variants,
+    out h5     raw_allele_bc_matrices_h5,
+    out path   raw_allele_bc_matrices_mex,
+    out h5     likelihood_allele_bc_matrices_h5,
+    out path   likelihood_allele_bc_matrices_mex,
+    src py     "stages/snpclust/count_alleles",
 ) split using (
-    in  vcf   chunk_variants,
-    in  bam   chunk_bam,
-    in  json  snps,
+    in  vcf    chunk_variants,
+    in  bam    chunk_bam,
+    in  json   snps,
 )
 
 stage CLUSTER_CELLS(

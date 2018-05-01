@@ -71,5 +71,6 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.coerce_strings()
     outs.output = [chunk.raw_variant_chunk for chunk in chunk_outs]
 
-    raw_variants = martian.make_path(outs.raw_variants)
-    tk_io.combine_vcfs(raw_variants.replace('.gz', ''), outs.output)
+    raw_variants = martian.make_path('raw_variants.vcf')
+    tk_io.combine_vcfs(raw_variants, outs.output)
+    outs.raw_variants = raw_variants + '.gz'
