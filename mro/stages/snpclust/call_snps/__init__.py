@@ -40,7 +40,7 @@ def split(args):
 
     chunks = []
     for bam, locus in zip(args.input_bams, args.loci):
-        chunks.append({'locus': locus, 'input_bam': bam, 'genome_fasta': local_path, '__mem_gb': 6*8, '__threads': 8})
+        chunks.append({'locus': locus, 'input_bam': bam, 'genome_fasta': local_path, '__mem_gb': 8*8, '__threads': 8})
     return {'chunks': chunks, 'join': {'__mem_gb': 16}}
 
 
@@ -53,10 +53,18 @@ def main(args, outs):
     in_bam = tk_bam.create_bam_infile(args.input_bam)
     sample = in_bam.header['RG'][0]['SM']
     raw_variant_chunk = martian.make_path(outs.raw_variant_chunk)
-    subprocess.check_call(['gatk-launch', 'Mutect2', '-R', args.genome_fasta, '--intervals',
+    # TODO: fix hardcoded path
+    # had to do this to deal with memory issues
+    subprocess.check_call(['java', '-Xmx{}g'.format(args.__mem_gb),
+                           '-jar', '/mnt/home/stephen/miniconda2/share/gatk4-4.0.1.2-0/gatk-package-4.0.1.2-local.jar',
+                           'Mutect2', '-R', args.genome_fasta, '--intervals',
                            bed_path, '-I', args.input_bam, '-tumor', sample,
                            '-O', raw_variant_chunk, '--TMP_DIR', os.getcwd(),
                            '--native-pair-hmm-threads', str(args.__threads)])
+    #subprocess.check_call(['gatk-launch', 'Mutect2', '-R', args.genome_fasta, '--intervals',
+    #                       bed_path, '-I', args.input_bam, '-tumor', sample,
+    #                       '-O', raw_variant_chunk, '--TMP_DIR', os.getcwd(),
+    #                       '--native-pair-hmm-threads', str(args.__threads)])
 
         
 def join(args, outs, chunk_defs, chunk_outs):

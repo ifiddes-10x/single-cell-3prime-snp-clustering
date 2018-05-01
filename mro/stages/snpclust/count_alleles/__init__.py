@@ -61,7 +61,7 @@ def split(args):
         chunks.append({'chunk_variants': chunk_variants, 'snps': out_json_file, 'chunk_bam': chunk_bam,
                        '__mem_gb': 8})
 
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb': 128}}
 
 def save_snps(out_filename, in_filenames):
     snps = []

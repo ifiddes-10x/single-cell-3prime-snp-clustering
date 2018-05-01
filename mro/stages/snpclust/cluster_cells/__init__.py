@@ -73,14 +73,14 @@ def split(args):
                 'components': components,
                 'model': get_model_name(components),
                 'chain': chain,
-                '__mem_gb': 8
+                '__mem_gb': 64
             }
             chunks.append(chunk)
 
     return {
         'chunks': chunks,
         'join': {
-            '__mem_gb': 64, # > K*K!*n*chains*8/1e9 * 3
+            '__mem_gb': 128, # > K*K!*n*chains*8/1e9 * 3
         },
     }
 
