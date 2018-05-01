@@ -81,6 +81,7 @@ def split(args):
         'chunks': chunks,
         'join': {
             '__mem_gb': 128, # > K*K!*n*chains*8/1e9 * 3
+            '__threads': 4
         },
     }
 
