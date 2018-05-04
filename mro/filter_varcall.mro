@@ -1,0 +1,30 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+@include "_snp_clusterer_stages.mro"
+
+pipeline SNP_CALLER(
+    in  path   reference_path,
+    in  bam    possorted_genome_bam,
+    in  tsv    cell_barcodes,
+    in  path   bed_file,
+    out vcf.gz raw_variants,
+)
+{
+    call FILTER_BAM(
+        input           = self.possorted_genome_bam,
+        reference_path  = self.reference_path,
+        bed_file        = self.bed_file,
+        cell_barcodes   = self.cell_barcodes,
+    )
+
+    call CALL_SNPS(
+        reference_path = self.reference_path,
+        input_bams     = FILTER_BAM.output_bams,
+        loci           = FILTER_BAM.loci,
+    )
+
+    return (
+        raw_variants  = CALL_SNPS.raw_variants,
+    )
+}

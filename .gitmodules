@@ -1,0 +1,3 @@
+[submodule "fidlib"]
+	path = lib/python/fidlib
+	url = https://github.com/10xApps/fidlib.git

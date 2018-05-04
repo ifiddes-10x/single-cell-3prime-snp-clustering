@@ -59,7 +59,7 @@ def split(args):
     chunks = []
     for chunk_bam, chunk_variants in zip(args.input_bams, args.variants):
         chunks.append({'chunk_variants': chunk_variants, 'snps': out_json_file, 'chunk_bam': chunk_bam,
-                       '__mem_gb': 8})
+                       '__mem_gb': 16})
 
     return {'chunks': chunks, 'join': {'__mem_gb': 128}}
 

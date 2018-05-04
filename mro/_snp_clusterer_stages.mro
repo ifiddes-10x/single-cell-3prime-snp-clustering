@@ -8,14 +8,14 @@ filetype tsv;
 filetype vcf;
 filetype vcf.gz;
 
-stage FILTER_MODIFY_BAM(
+stage FILTER_BAM(
     in  bam       input,
     in  path      reference_path,
     in  path      bed_file,
     in  tsv       cell_barcodes,
     out bam[]     output_bams,
     out string[]  loci,
-    src py     "stages/snpclust/filter_modify_bam",
+    src py     "stages/snpclust/filter_bam",
 ) split (
     in  string locus,
     in path    genome_fasta,

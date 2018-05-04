@@ -5,21 +5,23 @@
 import martian
 import subprocess
 import shutil
+import collections
 import itertools
 import tenkit.bam as tk_bam
 import cellranger.utils as cr_utils
 import snpclust.constants as snp_constants
+import fidlib.fidlib.intervals as fl_intervals
 import os
 
 __MRO__ = '''
-stage FILTER_MODIFY_BAM(
+stage FILTER_BAM(
     in  bam       input,
     in  path      reference_path,
     in  path      bed_file,
     in  tsv       cell_barcodes,
     out bam[]     output_bams, 
     out string[]  loci,
-    src py     "stages/snpclust/filter_modify_bam",
+    src py     "stages/snpclust/filter_bam",
 ) split (
     in  string locus,
     in path    genome_fasta,
@@ -42,8 +44,10 @@ def split(args):
     if args.bed_file is not None:
         loci = open(args.bed_file).readlines()
     else:
-        in_bam = tk_bam.create_bam_infile(args.input)
-        loci = build_loci(in_bam, snp_constants.REGION_SPLIT_SIZE)
+        # split up the genome, but only into exonic chunks.
+        ref_gtf = cr_utils.get_reference_genes_gtf(args.reference_path)
+        exons = find_exon_loci(ref_gtf)
+        loci = build_loci(exons, snp_constants.REGION_SPLIT_SIZE)
     chunks = [{'locus': locus, 'genome_fasta': local_path, '__mem_gb': 16} for locus in loci]
     return {'chunks': chunks}
 
@@ -51,8 +55,7 @@ def split(args):
 def main(args, outs):
 
     in_bam = tk_bam.create_bam_infile(args.input)
-    tmp_bam = martian.make_path('tmp.bam')
-    out_bam, _ = tk_bam.create_bam_outfile(tmp_bam, None, None, template=in_bam)
+    out_bam, _ = tk_bam.create_bam_outfile(outs.output, None, None, template=in_bam)
 
     cell_bcs = set(cr_utils.load_barcode_tsv(args.cell_barcodes))
     loci = [x.split() for x in args.locus.split('\n')]
@@ -74,20 +77,7 @@ def main(args, outs):
                     out_bam.write(read)
 
     out_bam.close()
-
-    # Correct the STAR mapping from 255 to 60 and take care of split reads
-    output_bam = martian.make_path(outs.output)
-    star_args = ['gatk-launch', 'SplitNCigarReads',
-                 '-R', args.genome_fasta,
-                 '-I', tmp_bam,
-                 '-O', output_bam,
-                 '--skip-mapping-quality-transform', 'false',
-                 '--create-output-bam-index', 'false',
-                 '--TMP_DIR', os.getcwd()]
-
-    subprocess.check_call(star_args)
-    os.remove(tmp_bam)
-    tk_bam.index(output_bam)
+    tk_bam.index(outs.output)
 
 
 def join(args, outs, chunk_defs, chunk_outs):
@@ -97,27 +87,37 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.loci = [chunk_def.locus for chunk_def in chunk_defs]
 
 
-def build_loci(in_bam, chunk_size):
+def find_exon_loci(ref_gtf):
     """
-    Given a BAM path, builds a set of loci
-    :param in_bam: Open BAM handle
+    Extracts exonic regions of a GTF into merged, sorted intervals
+    """
+    regions = collections.defaultdict(list)
+    for l in open(ref_gtf):
+        if '\texon\t' in l:
+            l = l.split()
+            i = fl_intervals.ChromosomeInterval(l[0], int(l[3]), int(l[4]), '.')
+            regions[l[0]].append(i)
+    merged_regions = {}
+    for chrom, region_list in regions.iteritems():
+        merged_regions[chrom] = fl_intervals.gap_merge_intervals(region_list, 0)
+    # report a flat list
+    return [item for sublist in merged_regions.itervalues() for item in sublist]
+
+
+def build_loci(exons, chunk_size):
+    """
+    Given a list of intervals, pack bins with as many until chunk_size is exceeded
     :param chunk_size: Number of bases to pack into one bin
     :return: BED-like string
     """
-    # greedy implementation of the bin packing problem
     loci = []
     this_locus = []
     bin_size = 0
-    for chrom, chrom_length in zip(in_bam.header.references, in_bam.header.lengths):
-        region_start = 0
-        while region_start < chrom_length:
-            start = region_start
-            end = min(region_start + chunk_size, chrom_length)
-            this_locus.append([chrom, start, end])
-            bin_size += end - start
-            if bin_size >= chunk_size:
-                loci.append('\n'.join(['\t'.join(map(str, x)) for x in this_locus]))
-                this_locus = []
-                bin_size = 0
-            region_start = end
+    for e in exons:
+        this_locus.append(e)
+        bin_size += len(e)
+        if bin_size >= chunk_size:
+            loci.append('\n'.join(['\t'.join(map(str, [e.chromosome, e.start, e.stop])) for e in this_locus]))
+            this_locus = []
+            bin_size = 0
     return loci
