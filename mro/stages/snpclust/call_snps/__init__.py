@@ -35,8 +35,8 @@ def split(args):
     except OSError:
         shutil.copy(genome_fasta_path, local_path)
     subprocess.check_call(['samtools', 'faidx', local_path])
-    with open(local_path.replace('.fa', '.dict'), 'w') as outf:
-        subprocess.check_call(['samtools', 'dict', local_path], stdout=outf)
+    #with open(local_path.replace('.fa', '.dict'), 'w') as outf:
+    #    subprocess.check_call(['samtools', 'dict', local_path], stdout=outf)
 
     chunks = []
     for bam, locus in zip(args.input_bams, args.loci):
@@ -53,12 +53,13 @@ def main(args, outs):
     with open(raw_variant_chunk, 'w') as outf:
         subprocess.check_call(['freebayes',
                                '-t', bed_path,
-                               '-f', args.reference_path,
+                               '-f', args.genome_fasta,
                                '--haplotype-length', '0',
                                '--min-alternate-count', '1',
                                '--min-alternate-fraction', '0',
                                '--pooled-continuous',
-                               '--use-best-n-alleles', '2'], stdout=outf)
+                               '--use-best-n-alleles', '2',
+                               args.input_bam], stdout=outf)
 
     # get the sample. Making the assumption that this is a single-sample BAM
     #in_bam = tk_bam.create_bam_infile(args.input_bam)

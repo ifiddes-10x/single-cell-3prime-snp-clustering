@@ -55,7 +55,9 @@ def split(args):
 def main(args, outs):
 
     in_bam = tk_bam.create_bam_infile(args.input)
-    out_bam, _ = tk_bam.create_bam_outfile(outs.output, None, None, template=in_bam)
+    tmp_bam = martian.make_path('tmp.bam')
+    out_bam, _ = tk_bam.create_bam_outfile(tmp_bam, None, None, template=in_bam)
+    #out_bam, _ = tk_bam.create_bam_outfile(outs.output, None, None, template=in_bam)
 
     cell_bcs = set(cr_utils.load_barcode_tsv(args.cell_barcodes))
     loci = [x.split() for x in args.locus.split('\n')]
@@ -77,6 +79,8 @@ def main(args, outs):
                     out_bam.write(read)
 
     out_bam.close()
+    # not sure why I have to do this, it should be sorted already. Maybe due to nearby exonic ranges?
+    subprocess.check_call(['sambamba', 'sort', '-o', outs.output, tmp_bam])
     tk_bam.index(outs.output)
 
 
