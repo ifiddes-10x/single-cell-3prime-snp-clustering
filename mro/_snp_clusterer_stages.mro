@@ -18,7 +18,6 @@ stage FILTER_BAM(
     src py     "stages/snpclust/filter_bam",
 ) split (
     in  string locus,
-    in path    genome_fasta,
     out bam    output,
 )
 

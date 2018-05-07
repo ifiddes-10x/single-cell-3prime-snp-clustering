@@ -4,14 +4,12 @@
 #
 import martian
 import subprocess
-import shutil
 import collections
 import itertools
 import tenkit.bam as tk_bam
 import cellranger.utils as cr_utils
 import snpclust.constants as snp_constants
 import fidlib.fidlib.intervals as fl_intervals
-import os
 
 __MRO__ = '''
 stage FILTER_BAM(
@@ -24,23 +22,11 @@ stage FILTER_BAM(
     src py     "stages/snpclust/filter_bam",
 ) split (
     in  string locus,
-    in path    genome_fasta,
     out bam    output,
 )
 '''
 
 def split(args):
-    # bring in genome fasta and index it -- cellranger references have no fasta index or dict file
-    genome_fasta_path = cr_utils.get_reference_genome_fasta(args.reference_path)
-    local_path = martian.make_path('genome.fa')
-    try:
-        os.symlink(genome_fasta_path, local_path)
-    except OSError:
-        shutil.copy(genome_fasta_path, local_path)
-    subprocess.check_call(['samtools', 'faidx', local_path])
-    with open(local_path.replace('.fa', '.dict'), 'w') as outf:
-        subprocess.check_call(['samtools', 'dict', local_path], stdout=outf)
-
     if args.bed_file is not None:
         loci = open(args.bed_file).readlines()
     else:
@@ -48,7 +34,7 @@ def split(args):
         ref_gtf = cr_utils.get_reference_genes_gtf(args.reference_path)
         exons = find_exon_loci(ref_gtf)
         loci = build_loci(exons, snp_constants.REGION_SPLIT_SIZE)
-    chunks = [{'locus': locus, 'genome_fasta': local_path, '__mem_gb': 16} for locus in loci]
+    chunks = [{'locus': locus, '__mem_gb': 16} for locus in loci]
     return {'chunks': chunks}
 
 
@@ -100,7 +86,8 @@ def find_exon_loci(ref_gtf):
         if '\texon\t' in l:
             l = l.split()
             i = fl_intervals.ChromosomeInterval(l[0], int(l[3]), int(l[4]), '.')
-            regions[l[0]].append(i)
+            if len(i) > 0:
+                regions[l[0]].append(i)
     merged_regions = {}
     for chrom, region_list in regions.iteritems():
         merged_regions[chrom] = fl_intervals.gap_merge_intervals(region_list, 0)

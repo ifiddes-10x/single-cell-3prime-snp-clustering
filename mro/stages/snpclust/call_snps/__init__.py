@@ -26,8 +26,7 @@ stage CALL_SNPS(
 )
 '''
 def split(args):
-    # TODO: combine this with FILTER_MODIFY_BAM into a library or explicitly pass the files along
-    # bring in genome fasta and index it -- cellranger references have no fasta index or dict file
+    # bring in genome fasta and index it -- cellranger references have no fasta index
     genome_fasta_path = cr_utils.get_reference_genome_fasta(args.reference_path)
     local_path = martian.make_path('genome.fa')
     try:
