@@ -11,6 +11,7 @@ filetype vcf.gz;
 stage FILTER_BAM(
     in  bam       input,
     in  path      reference_path,
+    in  path      reference_gtf,
     in  path      bed_file,
     in  tsv       cell_barcodes,
     out bam[]     output_bams,

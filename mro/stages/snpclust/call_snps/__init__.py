@@ -5,7 +5,6 @@
 import martian
 import subprocess
 import shutil
-import tenkit.bam as tk_bam
 import tenkit.bio_io as tk_io
 import cellranger.utils as cr_utils
 import os
@@ -25,6 +24,7 @@ stage CALL_SNPS(
     out vcf    raw_variant_chunk,
 )
 '''
+
 def split(args):
     # bring in genome fasta and index it -- cellranger references have no fasta index
     genome_fasta_path = cr_utils.get_reference_genome_fasta(args.reference_path)
@@ -34,12 +34,12 @@ def split(args):
     except OSError:
         shutil.copy(genome_fasta_path, local_path)
     subprocess.check_call(['samtools', 'faidx', local_path])
-    #with open(local_path.replace('.fa', '.dict'), 'w') as outf:
-    #    subprocess.check_call(['samtools', 'dict', local_path], stdout=outf)
+    with open(local_path.replace('.fa', '.dict'), 'w') as outf:
+        subprocess.check_call(['samtools', 'dict', local_path], stdout=outf)
 
     chunks = []
     for bam, locus in zip(args.input_bams, args.loci):
-        chunks.append({'locus': locus, 'input_bam': bam, 'genome_fasta': local_path, '__mem_gb': 32, '__threads': 1})
+        chunks.append({'locus': locus, 'input_bam': bam, 'genome_fasta': local_path, '__mem_gb': 48, '__threads': 1})
     return {'chunks': chunks, 'join': {'__mem_gb': 64}}
 
 
@@ -49,16 +49,19 @@ def main(args, outs):
         f.write(args.locus)
 
     raw_variant_chunk = martian.make_path(outs.raw_variant_chunk)
-    with open(raw_variant_chunk, 'w') as outf:
-        subprocess.check_call(['freebayes',
-                               '-t', bed_path,
-                               '-f', args.genome_fasta,
-                               '--haplotype-length', '0',
-                               '--min-alternate-count', '1',
-                               '--min-alternate-fraction', '0',
-                               '--pooled-continuous',
-                               '--use-best-n-alleles', '2',
-                               args.input_bam], stdout=outf)
+
+    # TODO: fix hardcoded path
+    # had to do this to deal with memory issues
+    subprocess.check_call(['java', '-Xmx{}g'.format(args.__mem_gb),
+                           '-jar', '/mnt/home/stephen/miniconda2/share/gatk4-4.0.1.2-0/gatk-package-4.0.1.2-local.jar',
+                           'HaplotypeCaller',
+                           '-R', args.genome_fasta,
+                           '--intervals', bed_path,
+                           '-I', args.input_bam,
+                           '-O', raw_variant_chunk,
+                           '--TMP_DIR', os.getcwd(),
+                           '--native-pair-hmm-threads', str(args.__threads)])
+
 
     # get the sample. Making the assumption that this is a single-sample BAM
     #in_bam = tk_bam.create_bam_infile(args.input_bam)

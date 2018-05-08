@@ -5,6 +5,7 @@
 
 pipeline SNP_CALLER(
     in  path   reference_path,
+    in  path   reference_gtf,
     in  bam    possorted_genome_bam,
     in  tsv    cell_barcodes,
     in  path   bed_file,
@@ -14,6 +15,7 @@ pipeline SNP_CALLER(
     call FILTER_BAM(
         input           = self.possorted_genome_bam,
         reference_path  = self.reference_path,
+        reference_gtf   = self.reference_gtf,
         bed_file        = self.bed_file,
         cell_barcodes   = self.cell_barcodes,
     )
