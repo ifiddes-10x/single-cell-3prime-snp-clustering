@@ -2,6 +2,8 @@
 #
 # Copyright (c) 2016 10X Genomics, Inc. All rights reserved.
 #
+import martian
+import subprocess
 import collections
 import itertools
 import tenkit.bam as tk_bam
@@ -43,16 +45,17 @@ def split(args):
 def main(args, outs):
 
     in_bam = tk_bam.create_bam_infile(args.input)
-    #tmp_bam = martian.make_path('tmp.bam')
-    #out_bam, _ = tk_bam.create_bam_outfile(tmp_bam, None, None, template=in_bam)
-    out_bam, _ = tk_bam.create_bam_outfile(outs.output, None, None, template=in_bam)
+    tmp_bam = martian.make_path('tmp.bam')
+    out_bam, _ = tk_bam.create_bam_outfile(tmp_bam, None, None, template=in_bam)
+    #out_bam, _ = tk_bam.create_bam_outfile(outs.output, None, None, template=in_bam)
 
     cell_bcs = set(cr_utils.load_barcode_tsv(args.cell_barcodes))
     loci = [x.split() for x in args.locus.split('\n')]
 
-    # remove the possibility of the same read pair being sampled twice by keeping track of read pairs
-    # keep track of pairs in a revolving set using a OrderedDict
-    seen_reads = collections.OrderedDict()
+    # remove the possibility of the same alignment showing up more than once
+    # this is a hack that will blow up memory requirements if chunk sizes are too big
+    seen_reads = set()
+    repeats = 0
 
     for chrom, start, stop in loci:
         bam_iter = in_bam.fetch(chrom, int(start), int(stop))
@@ -70,13 +73,11 @@ def main(args, outs):
                     dupe_keys.add(dupe_key)
 
                     # filter reads we have seen already nearby
-                    read_key = (read.qname, read.is_read1)
+                    read_key = (read.qname, read.is_read1, read.pos)
                     if read_key in seen_reads:
+                        repeats += 1
                         continue
-                    seen_reads[read_key] = None
-                    # memory management hack
-                    if len(seen_reads) > 10000:
-                        _ = seen_reads.popitem()
+                    seen_reads.add(read_key)
 
                     # flag as non-duplicate and fix mapq
                     read.is_duplicate = False
@@ -86,8 +87,8 @@ def main(args, outs):
                     out_bam.write(read)
 
     out_bam.close()
-    # not sure why I have to do this, it should be sorted already. Maybe due to nearby exonic ranges?
-    #subprocess.check_call(['sambamba', 'sort', '-o', outs.output, tmp_bam])
+    martian.log_info('{} repeats seen'.format(repeats))
+    subprocess.check_call(['sambamba', 'sort', '-t', '1', '-o', outs.output, tmp_bam])
     tk_bam.index(outs.output)
 
 

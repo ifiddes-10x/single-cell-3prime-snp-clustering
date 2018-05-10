@@ -6,10 +6,12 @@
 pipeline SNP_CALLER(
     in  path   reference_path,
     in  path   reference_gtf,
+    in  path   gatk_jar,
     in  bam    possorted_genome_bam,
     in  tsv    cell_barcodes,
     in  path   bed_file,
-    out vcf.gz raw_variants,
+    out vcf.gz raw_hc_variants,
+    out vcf.gz raw_mutect_variants,
 )
 {
     call FILTER_BAM(
@@ -24,9 +26,11 @@ pipeline SNP_CALLER(
         reference_path = self.reference_path,
         input_bams     = FILTER_BAM.output_bams,
         loci           = FILTER_BAM.loci,
+        gatk_jar       = self.gatk_jar,
     )
 
     return (
-        raw_variants  = CALL_SNPS.raw_variants,
+        raw_hc_variants  = CALL_SNPS.raw_hc_variants,
+        raw_mutect_variants  = CALL_SNPS.raw_mutect_variants,
     )
 }

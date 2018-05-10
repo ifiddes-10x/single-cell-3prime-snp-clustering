@@ -26,14 +26,16 @@ stage CALL_SNPS(
     in  path     reference_path,
     in  bam[]    input_bams,
     in  string[] loci,
-    out vcf[]    output,
-    out vcf.gz   raw_variants,
+    in  path     gatk_jar,
+    out vcf.gz   raw_hc_variants,
+    out vcf.gz   raw_mutect_variants,
     src py       "stages/snpclust/call_snps",
 ) split using (
     in  bam    input,
     in  string locus,
     in  path   genome_fasta,
-    out vcf    raw_variant_chunk,
+    out vcf    raw_hc_variant_chunk,
+    out vcf    raw_mutect_variant_chunk,
 )
 
 stage COUNT_ALLELES(
