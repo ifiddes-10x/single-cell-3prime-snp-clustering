@@ -3,216 +3,127 @@
 # Copyright (c) 2016 10X Genomics, Inc. All rights reserved.
 #
 import collections
-import json
+import itertools
+import pyfasta
+import shutil
 import martian
 import numpy as np
-import scipy.misc as sp_misc
-import scipy.stats as sp_stats
+import vcf
 import tenkit.bam as tk_bam
 import tenkit.bio_io as tk_io
-import tenkit.constants as tk_constants
-import cellranger.constants as cr_constants
 import cellranger.matrix as cr_matrix
 import cellranger.utils as cr_utils
-import snpclust.constants as snp_constants
 
 __MRO__ = '''
 stage COUNT_ALLELES(
-    in  path  reference_path,
-    in  bam[] input_bams,
-    in  vcf[] variants,
-    in  tsv   cell_barcodes,
-    in  int   min_bcs_per_snp,
-    in  int   min_snp_obs,
-    in  int   min_snp_base_qual,
-    in  float base_error_rate,
-    out vcf   filtered_variants,
-    out h5    raw_allele_bc_matrices_h5,
-    out path  raw_allele_bc_matrices_mex,
-    out h5    likelihood_allele_bc_matrices_h5,
-    out path  likelihood_allele_bc_matrices_mex,
-    src py    "stages/snpclust/count_alleles",
+    in  path      reference_path,
+    in  bam[]     input_bams,
+    in  vcf[]     variants,
+    in  tsv       cell_barcodes,
+    in  int       min_bcs_per_snp,
+    in  int       min_snp_obs,
+    in  int       min_snp_base_qual,
+    in  float     base_error_rate,
+    out h5        raw_allele_bc_matrices_h5,
+    out path      raw_allele_bc_matrices_mex,
+    src py        "stages/snpclust/count_alleles",
 ) split using (
-    in  vcf   chunk_variants,
-    in  bam   chunk_bam,
-    in  json  snps,
+    in  bam       chunk_bam,
+    in  vcf       chunk_variants,
+    in  fasta     fasta,
+    in  int       num_alleles,
+    out  h5       allele_matrix,
 )
 '''
 
-def format_record(record):
-    return ','.join((record.CHROM, str(record.POS), str(record.REF), str(record.ALT[0])))
-
-def vcf_record_iter(in_filename):
-    in_vcf = tk_io.VariantFileReader(in_filename)
-    for record in in_vcf.record_getter(restrict_type='snp'):
-        # Only support 1 ALT
-        if len(record.ALT) > 1:
-            continue
-        assert len(record.ALT) == 1
-
-        yield record
-
 def split(args):
-    out_json_file = martian.make_path('snps.json')
-    save_snps(out_json_file, args.variants)
+
+    # prepare a local pyfasta-capable reference
+    genome_fasta_path = cr_utils.get_reference_genome_fasta(args.reference_path)
+    local_fasta = martian.make_path('genome.fa')
+    shutil.copy(genome_fasta_path, local_fasta)
+    _ = pyfasta.Fasta(local_fasta)  # will flatten the file
+
+    # hacky way to find the largest number of alleles we will expect to see
+    max_alt_alleles = 0
+    for v in args.vcf:
+        for rec in vcf.Reader(open(v)):
+            max_alt_alleles = max(max_alt_alleles, len(rec.ALT))
+    num_alleles = max_alt_alleles + 1
 
     chunks = []
     for chunk_bam, chunk_variants in zip(args.input_bams, args.variants):
-        chunks.append({'chunk_variants': chunk_variants, 'snps': out_json_file, 'chunk_bam': chunk_bam,
-                       '__mem_gb': 16})
+        chunks.append({'chunk_variants': chunk_variants, 'chunk_bam': chunk_bam, 'fasta': local_fasta,
+                       'num_alleles': num_alleles, '__mem_gb': 16})
 
     return {'chunks': chunks, 'join': {'__mem_gb': 128}}
 
-def save_snps(out_filename, in_filenames):
-    snps = []
-    for in_filename in in_filenames:
-        for record in vcf_record_iter(in_filename):
-            snps.append(format_record(record))
-
-    with open(out_filename, 'w') as f:
-        json.dump(snps, f)
-
-def load_snps(filename):
-    # HACK: Save SNPs as Gene tuples so we can reuse code in GeneBCMatrices
-    with open(filename, 'r') as f:
-        return [cr_constants.Gene(str(snp), '', None, None, None) for snp in json.load(f)]
-
-def get_read_qpos(read):
-    # Support pysam 0.7.8 and 0.9.0
-    if hasattr(read, 'qpos'):
-        return read.qpos
-    elif hasattr(read, 'query_position'):
-        return read.query_position
-
-    raise Exception("Pysam pileup read has neither qpos nor query_position attribute")
 
 def main(args, outs):
     in_bam = tk_bam.create_bam_infile(args.chunk_bam)
+    fasta = pyfasta.Fasta(args.fasta)
+    # hack to strip fasta comments
+    fasta = {name.split()[0]: rec for name, rec in fasta.iteritems()}
 
-    out_vcf = tk_io.VariantFileWriter(
-        open(outs.filtered_variants, 'w'), template_file=open(args.chunk_variants))
-
-    snps = load_snps(args.snps)
+    # barcodes
     bcs = cr_utils.load_barcode_tsv(args.cell_barcodes)
+    # efficient barcode index
+    bc_index = {x: i for i, x in enumerate(bcs)}
 
-    raw_matrix_types = snp_constants.SNP_BASE_TYPES
-    raw_matrix_snps = [snps for _ in snp_constants.SNP_BASE_TYPES]
-    raw_allele_bc_matrices = cr_matrix.GeneBCMatrices(raw_matrix_types, raw_matrix_snps, bcs)
+    # load all records so we know the matrix shape
+    records = list(vcf.Reader(open(args.chunk_variants)))
 
-    likelihood_matrix_types = snp_constants.ALLELES
-    likelihood_matrix_snps = [snps for _ in snp_constants.ALLELES]
-    likelihood_allele_bc_matrices = cr_matrix.GeneBCMatrices(likelihood_matrix_types, likelihood_matrix_snps, bcs, dtype=np.float64)
+    # hacky way to create fake 'genes'
+    class Pos(object):
+        def __init__(self, rec):
+            self.id = '{}_{}'.format(rec.CHROM, rec.POS)
 
-    # Configurable SNP filter parameters
-    min_bcs_per_snp = args.min_bcs_per_snp if args.min_bcs_per_snp is not None else snp_constants.DEFAULT_MIN_BCS_PER_SNP
-    min_snp_obs = args.min_snp_obs if args.min_snp_obs is not None else snp_constants.DEFAULT_MIN_SNP_OBS
-    base_error_rate = args.base_error_rate if args.base_error_rate is not None else snp_constants.DEFAULT_BASE_ERROR_RATE
-    min_snp_base_qual = args.min_snp_base_qual if args.min_snp_base_qual is not None else snp_constants.DEFAULT_MIN_SNP_BASE_QUAL
+    positions = [Pos(rec) for rec in records]
 
-    for record in vcf_record_iter(args.chunk_variants):
-        ref_base = str(record.REF)
-        alt_base = str(record.ALT[0])
+    # initialize matrix -- replacing 'genomes' with num_alleles and 'genes' with snps
+    mat = cr_matrix.GeneBCMatrices(range(4), itertools.repeat(positions, 4), bcs)
 
-        pos = record.POS - 1
-        snps = collections.defaultdict(lambda: np.zeros((2, 2)))
-        for col in in_bam.pileup(record.CHROM, pos, pos+1):
-            if col.pos != pos:
-                continue
+    # begin iterating over records and assigning allele calls
+    for i, record in enumerate(records):
+        alleles = tk_io.get_record_alt_alleles(record)
+        ref = tk_io.get_record_ref(record)
+        all_alleles = [ref] + alleles
+        chrom = tk_io.get_record_chrom(record)
+        pos = tk_io.get_record_pos(record)
+        ref = tk_io.get_record_ref(record)
 
-            for read in col.pileups:
-                bc = cr_utils.get_read_barcode(read.alignment)
-                umi = cr_utils.get_read_umi(read.alignment)
-                assert bc in set(bcs) and umi is not None
+        # iterating over single column means this loop only actually happens once
+        # this is required or pysam gets very upset when you try to look at the records
+        for col in in_bam.pileup(chrom, pos - 1, pos, truncate=True):
+            # keep track of mapping of CB -> allele calls in order to populate matrix
+            cb_map = collections.defaultdict(lambda: np.zeros(args.num_alleles))
 
-                # Overlaps an exon junction
-                qpos = get_read_qpos(read)
-                if qpos is None:
-                    continue
+            # strip N-cigar operations (introns) to avoid needless computation
+            # also check for having a cell barcode
+            reads = [x.alignment for x in col.pileups if not x.is_refskip and x.alignment.has_tag('CB')
+                     and x.alignment.get_tag('CB') in bc_index]
 
-                base = str(read.alignment.query[qpos - read.alignment.qstart])
-                base_qual = ord(read.alignment.qual[qpos - read.alignment.qstart]) - tk_constants.ILLUMINA_QUAL_OFFSET
+            for read in reads:
+                allele = tk_bam.read_contains_allele_sw(ref, all_alleles, pos, read, fasta[chrom],
+                                                        match=6, mismatch=-4, gap_open=-6, gap_extend=-1)
+                if allele != -1:
+                    cb = read.get_tag('CB')
+                    cb_map[cb][allele] += 1
 
-                if base == ref_base:
-                    base_index = 0
-                elif base == alt_base:
-                    base_index = 1
-                else:
-                    continue
+            # transform CB map into matrix values -- each cell contains the number of reads of that allele seen
+            for cb, cb_m in cb_map.iteritems():
+                j = bc_index[cb]
+                for k, val in enumerate(cb_m):
+                    mat.get_matrix(k).m[i, j] = val
 
-                dupe_key = (bc, umi)
-                snps[dupe_key][base_index, 0] += 1
-                snps[dupe_key][base_index, 1] = max(base_qual, snps[dupe_key][base_index, 1])
+    mat.save_h5(outs.allele_matrix)
 
-        bcs_bases = collections.defaultdict(collections.Counter)
-        for (bc, umi), bases in snps.iteritems():
-            base_index = np.argmax(bases[:, 0])
-            base = ref_base if base_index == 0 else alt_base
-            base_qual = bases[base_index, 1]
-            if base_qual < min_snp_base_qual:
-                continue
-            bcs_bases[bc][base] += 1
-
-        # Filter if not enough unique barcodes
-        if len(bcs_bases) < min_bcs_per_snp:
-            continue
-
-        # Filter if not enough observed bases
-        snp_obs = 0
-        for b in bcs_bases.itervalues():
-            snp_obs += sum([count for count in b.itervalues()])
-        if snp_obs < min_snp_obs:
-            continue
-
-        for bc, bases in bcs_bases.iteritems():
-            ref_obs = bases[ref_base]
-            alt_obs = bases[alt_base]
-            total_obs = ref_obs + alt_obs
-            obs = np.array([
-                ref_obs,
-                alt_obs,
-            ])
-
-            log_p_hom_ref = sp_stats.binom.logpmf(ref_obs, total_obs, 1 - base_error_rate)
-            log_p_hom_alt = sp_stats.binom.logpmf(alt_obs, total_obs, 1 - base_error_rate)
-            log_p_het = sp_stats.binom.logpmf(ref_obs, total_obs, 0.5)
-
-            log_p = np.array([
-                log_p_hom_ref,
-                log_p_het,
-                log_p_hom_alt,
-            ])
-            log_p -= sp_misc.logsumexp(log_p)
-
-            matrix = raw_allele_bc_matrices.matrices.values()[0]
-            snp_index = matrix.gene_id_to_int(format_record(record))
-            bc_index = matrix.bc_to_int(bc)
-
-            for i, base_type in enumerate(snp_constants.SNP_BASE_TYPES):
-                raw_allele_bc_matrices.get_matrix(base_type).m[snp_index, bc_index] = obs[i]
-
-            for i, allele in enumerate(snp_constants.ALLELES):
-                likelihood_allele_bc_matrices.get_matrix(allele).m[snp_index, bc_index] = log_p[i]
-
-        out_vcf.write_record(record)
-
-    raw_allele_bc_matrices.save_h5(outs.raw_allele_bc_matrices_h5)
-    likelihood_allele_bc_matrices.save_h5(outs.likelihood_allele_bc_matrices_h5)
 
 def join(args, outs, chunk_defs, chunk_outs):
     outs.coerce_strings()
 
-    input_vcfs = [chunk_out.filtered_variants for chunk_out in chunk_outs]
-    filtered_variants = martian.make_path('filtered_variants.vcf')
-    tk_io.combine_vcfs(filtered_variants, input_vcfs)
-    outs.filtered_variants = filtered_variants + '.gz'
-
     raw_chunk_h5s = [chunk_out.raw_allele_bc_matrices_h5 for chunk_out in chunk_outs]
     raw_allele_bc_matrices = cr_matrix.merge_matrices(raw_chunk_h5s)
 
-    likelihood_chunk_h5s = [chunk_out.likelihood_allele_bc_matrices_h5 for chunk_out in chunk_outs]
-    likelihood_allele_bc_matrices = cr_matrix.merge_matrices(likelihood_chunk_h5s)
-
     raw_allele_bc_matrices.save_h5(outs.raw_allele_bc_matrices_h5)
     raw_allele_bc_matrices.save_mex(outs.raw_allele_bc_matrices_mex)
-    likelihood_allele_bc_matrices.save_h5(outs.likelihood_allele_bc_matrices_h5)
-    likelihood_allele_bc_matrices.save_mex(outs.likelihood_allele_bc_matrices_mex)
