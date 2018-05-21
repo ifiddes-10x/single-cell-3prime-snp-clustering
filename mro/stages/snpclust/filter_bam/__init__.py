@@ -2,6 +2,7 @@
 #
 # Copyright (c) 2016 10X Genomics, Inc. All rights reserved.
 #
+import os
 import martian
 import subprocess
 import collections
@@ -36,7 +37,8 @@ def split(args):
             ref_gtf = args.reference_gtf
         else:
             ref_gtf = cr_utils.get_reference_genes_gtf(args.reference_path)
-        exons = find_exon_loci(ref_gtf)
+        chrom_sizes = get_chrom_sizes(args.reference_path)
+        exons = find_exon_loci(ref_gtf, chrom_sizes)
         loci = build_loci(exons, snp_constants.REGION_SPLIT_SIZE)
     chunks = [{'locus': locus, '__mem_gb': 16} for locus in loci]
     return {'chunks': chunks}
@@ -99,15 +101,18 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.loci = [chunk_def.locus for chunk_def in chunk_defs]
 
 
-def find_exon_loci(ref_gtf):
+def find_exon_loci(ref_gtf, chrom_sizes):
     """
     Extracts exonic regions of a GTF into merged, sorted intervals
     """
     regions = collections.defaultdict(list)
     for l in open(ref_gtf):
-        if '\texon\t' in l:
+        if '\tCDS\t' in l:
             l = l.split()
-            i = fl_intervals.ChromosomeInterval(l[0], int(l[3]) - 1, int(l[4]), '.')
+            chrom = l[0]
+            start = max(int(l[3]) - 11, 0)
+            stop = min(int(l[4]) + 10, chrom_sizes[chrom])
+            i = fl_intervals.ChromosomeInterval(chrom, start, stop, '.')
             if len(i) > 0:
                 regions[l[0]].append(i)
     merged_regions = {}
@@ -134,3 +139,12 @@ def build_loci(exons, chunk_size):
             this_locus = []
             bin_size = 0
     return loci
+
+
+def get_chrom_sizes(reference_path):
+    """Load chrom sizes"""
+    chrom_sizes = {}
+    for l in open(os.path.join(reference_path, 'star', 'chrNameLength.txt')):
+        chrom, size = l.split()
+        chrom_sizes[chrom] = int(size)
+    return chrom_sizes
